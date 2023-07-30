@@ -1,0 +1,189 @@
+# Importing libraries
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.svm import SVR
+from sklearn.neural_network import MLPRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+
+# importing the training data
+dataset=pd.read_csv('train.csv') # training data
+
+# Dropping multiple columns with more than 1000 missing values
+columns_to_drop = ['Alley', 'FireplaceQu', 'PoolArea', 'PoolQC', 'Fence', 'MiscFeature']
+dataset.drop(columns_to_drop, axis=1, inplace=True)
+
+# Dealing with the missing data
+# List of columns for which you want to perform mode imputation
+columns_to_impute = dataset.iloc[:, 1:76]
+
+label_X = dataset.copy()
+
+# float and int imputation
+float_columns = dataset.select_dtypes(exclude='object')
+float_imputed = float_columns.fillna(float_columns.mean())
+
+# Mode Imputation for Categorical Columns
+categorical_columns = label_X.select_dtypes(include='object')
+
+# Compute the mode for each column
+modes = categorical_columns.mode().iloc[0]
+
+# Impute missing values with the respective mode for each column
+label_X[categorical_columns.columns]= label_X[categorical_columns.columns].fillna(modes)
+
+categorical_imputed=label_X[categorical_columns.columns]
+
+# Combine the imputed values back to the original DataFrame
+dataset_clean= pd.concat([float_imputed, categorical_imputed], axis=1)
+
+# Transforming the categorical columns to numerical values
+from sklearn.preprocessing import OrdinalEncoder
+
+s = (dataset_clean.dtypes == 'object')
+object_cols = list(s[s].index)
+
+# Apply ordinal encoder to each column with categorical data
+
+ordinal_encoder = OrdinalEncoder()
+label_X[object_cols] = ordinal_encoder.fit_transform(dataset_clean[object_cols])
+
+clean_categorical=label_X[object_cols]
+
+Train_clean= pd.concat([float_imputed, clean_categorical], axis=1)
+
+# feature engineering 
+# introducing new feature (season)
+Train_clean['YearSold'] = Train_clean['YrSold']
+Train_clean['MonthSold'] = Train_clean['MoSold']
+
+# Create a function to map month numbers to seasons
+def get_season(month):
+    if 3 <= month <= 5:
+        return 'Spring'
+    elif 6 <= month <= 8:
+        return 'Summer'
+    elif 9 <= month <= 11:
+        return 'Fall'
+    else:
+        return 'Winter'
+
+Train_clean['Season'] = Train_clean['MonthSold'].apply(get_season)
+
+# transforming season to numerical data
+from sklearn.preprocessing import OneHotEncoder
+
+categoricals_columns = ['Season']
+
+# Perform one-hot encoding
+one_hot_encoder = OneHotEncoder(handle_unknown='ignore', sparse=False)
+categorical_encoded = one_hot_encoder.fit_transform(Train_clean[categoricals_columns])
+categorical_encoded_df = pd.DataFrame(categorical_encoded, columns=one_hot_encoder.get_feature_names(categoricals_columns))
+
+# Drop the original categorical columns and merge the one-hot encoded ones
+Train_clean = Train_clean.drop(columns=categoricals_columns)
+Train_clean = pd.concat([Train_clean, categorical_encoded_df], axis=1)
+
+# creating interaction features
+Train_clean['GarageInteraction'] = Train_clean['GarageCars'] * Train_clean['GarageArea']
+
+#Exploratory Data Analysis (EDA) 
+
+# Distribution of the target variable 'SalePrice'
+plt.figure(figsize=(8, 6))
+plt.hist(Train_clean['SalePrice'], bins=30, edgecolor='black', alpha=0.7)
+plt.title('Distribution of Sale Prices')
+plt.xlabel('Sale Price')
+plt.ylabel('Frequency')
+plt.show()
+
+# Correlation heatmap to understand relationships between numerical variables
+plt.figure(figsize=(12, 10))
+sns.heatmap(Train_clean.corr(), cmap='coolwarm', annot=True, fmt='.2f')
+plt.title('Correlation Heatmap')
+plt.show()
+
+# drawing a box plot to identify Salesprice outliers
+plt.figure(figsize=(6, 8))
+sns.boxplot(y='SalePrice', data=Train_clean)
+plt.title('Box Plot of Sale Prices')
+plt.ylabel('Sale Price')
+plt.show()
+
+# Seasonal sales patterns
+Train_clean['MonthSold'] = Train_clean['MoSold'].apply(lambda x: pd.to_datetime(str(x), format='%m').strftime('%b'))
+plt.figure(figsize=(12, 6))
+sns.boxplot(x='MonthSold', y='SalePrice', data=Train_clean)
+plt.title('Seasonal Sales Patterns')
+plt.xlabel('Month Sold')
+plt.ylabel('Sale Price')
+plt.show()
+
+# Impact of categorical features on sales (example: 'Neighborhood')
+plt.figure(figsize=(12, 6))
+sns.boxplot(x='Neighborhood', y='SalePrice', data=Train_clean)
+plt.title('Impact of Neighborhood on Sales')
+plt.xticks(rotation=45)
+plt.xlabel('Neighborhood')
+plt.ylabel('Sale Price')
+plt.show()
+
+# Relationship between 'GrLivArea' and 'SalePrice' (example of scatter plot)
+plt.figure(figsize=(8, 6))
+sns.scatterplot(x='GrLivArea', y='SalePrice', data=Train_clean)
+plt.title('GrLivArea vs. Sale Price')
+plt.xlabel('GrLivArea')
+plt.ylabel('Sale Price')
+plt.show()
+
+# Data preparation for modeling 
+from sklearn.model_selection import train_test_split
+# Define the features (X) and the target variable (y)
+X = Train_clean.drop(columns=['SalePrice'])  # All columns except 'SalePrice' will be used as features
+y = Train_clean['SalePrice']  # 'SalePrice' is the target variable
+
+# spliting the data (80% training and 20% testing)
+X_train, X_test, y_train, y_test=train_test_split(X, y, test_size=0.2, random_state=0)
+
+# Model Selection and Training
+# Create a dictionary to store the model names and corresponding model instances
+models = {
+    'Linear Regression': LinearRegression(),
+    'Decision Tree': DecisionTreeRegressor(),
+    'Random Forest': RandomForestRegressor(),
+    'Gradient Boosting': GradientBoostingRegressor(),
+    'Support Vector Regression': SVR(),
+    'Neural Network': MLPRegressor(max_iter=1000)  # You can adjust the max_iter based on convergence
+}
+
+# Function to train and evaluate the models
+def train_and_evaluate_model(model, X_train, y_train, X_test, y_test):
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+    return mse, r2
+
+# Train and evaluate each model
+results = {}
+for model_name, model_instance in models.items():
+    mse, r2 = train_and_evaluate_model(model_instance, X_train, y_train, X_test, y_test)
+    results[model_name] = {'MSE': mse, 'R-squared': r2}
+
+# Print the evaluation results
+for model_name, metrics in results.items():
+    print(f'{model_name}:')
+    print(f'  Mean Squared Error (MSE): {metrics["MSE"]}')
+    print(f'  R-squared (R2): {metrics["R-squared"]}')
+    print('')
+
+# Select the best performing model based on the evaluation results
+best_model_name = min(results, key=lambda x: results[x]['MSE'])
+best_model = models[best_model_name]
+print(f'Best Model: {best_model_name}')
+
+# sales prediction 
+sales_2022 = best_model.predict(X_2022)
